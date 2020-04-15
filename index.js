@@ -27,6 +27,11 @@ exports.main = (req, res) => {
     res.send('Done !');
   };
 
+if (process.env.DEBUG) {
+    main();
+}
+
+
 function main(){
     console.log(">>> OpenAIP to GeoJSON converter");
     // Shows the main menu used by this little script.
@@ -47,6 +52,7 @@ function getOpenAipAirsapceFile() {
 }
 
 function getFileData(data){
+    console.log(colors.green("Parsing Openaip data."));
     xml2js.parseString(_openAipAirspaceData, function(err, result){
         if(err) { 
             return console.err(err);
@@ -57,6 +63,7 @@ function getFileData(data){
 }
 
 function doAirspaces(inputData){
+    console.log(colors.green("Transforming Openaip data to Geojson."));
     var airspacesList = inputData.OPENAIP.AIRSPACES[0].ASP;
     for(var a = 0; a < airspacesList.length; a ++){
         var tempAirspace = airspacesList[a];
@@ -95,10 +102,11 @@ function doAirspaces(inputData){
     console.log(colors.yellow(">>> DONE : "+ airspaces.length + " airspaces"));
 
     // Create file
-    createGeoFile(airspaces);
+    return createGeoFile(airspaces);
 }
 
 function createGeoFile(data){
+    console.log(colors.yellow(">>> Writing result to FTP : "+ FtpServerNameHeatmap));
     var geoData = GeoJSON.parse(data, {'Polygon':'geometry'});
     var jsonGeoData = JSON.stringify(geoData);
 
