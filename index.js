@@ -19,12 +19,15 @@ var FtpPasswordHeatmap = process.env.FTP_PASSWORD_HEATMAP;
 var _ftpConnectionInfo = {host: FtpServerNameHeatmap, user: FtpLoginHeatmap, password: FtpPasswordHeatmap};
 
 // Declare global vars
-var airspaces	= [],
+var airspaces	= [];
 var _openAipAirspaceData = null;
 
-run();
+exports.main = (req, res) => {
+    main()
+    res.send(`Hello ${escapeHtml(req.query.name || req.body.name || 'World')}!`);
+  };
 
-function run(){
+function main(){
     console.log(">>> OpenAIP to GeoJSON converter");
     // Shows the main menu used by this little script.
     console.log(FtpServerNameHeatmap);
