@@ -23,8 +23,8 @@ var airspaces	= [];
 var _openAipAirspaceData = null;
 
 exports.main = (req, res) => {
-    main()
-    res.send(`Hello ${escapeHtml(req.query.name || req.body.name || 'World')}!`);
+    main();
+    res.send('Done !');
   };
 
 function main(){
