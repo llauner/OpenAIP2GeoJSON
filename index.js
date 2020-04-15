@@ -4,12 +4,15 @@ var xml2js		= require('xml2js'),
 	colors		= require('colors/safe'),
 	Q			= require('q'),
     GeoJSON		= require('geojson')
-    axios       = require('axios');
+    axios       = require('axios'),
+    Promise     = require('promise');
+
+const util = require('util');
 
 var PromiseFtp = require('promise-ftp');
 
 const OpenAipAirspaceUrl = "https://www.openaip.net/customer_export_akfshb9237tgwiuvb4tgiwbf/fr_asp.aip";
-const CommonMapDirectory = "xxxmap";
+const CommonMapDirectory = "airspacedata";
 const AirspaceFileName = "openaip-airspace.geojson";
 
 var FtpServerNameHeatmap = process.env.FTP_SERVER_NAME_HEATMAP;
@@ -18,48 +21,62 @@ var FtpPasswordHeatmap = process.env.FTP_PASSWORD_HEATMAP;
 
 var _ftpConnectionInfo = {host: FtpServerNameHeatmap, user: FtpLoginHeatmap, password: FtpPasswordHeatmap};
 
+const parseStringPromise = util.promisify(xml2js.parseString)
+
 // Declare global vars
 var airspaces	= [];
-var _openAipAirspaceData = null;
 
 exports.main = (req, res) => {
-    main();
-    res.send('Done !');
-  };
+    main().then(response => {
+        var message = ">>> OK :" + response;
+        console.log(message);
+        res.send(message);
+    });
+    
+};
 
 if (process.env.DEBUG) {
-    main();
+    main().then(response => {
+        console.log(">>> OK :" + response);
+        process.exit(0);
+    });
+    
 }
 
-
-function main(){
+async function main(){
     console.log(">>> OpenAIP to GeoJSON converter");
-    // Shows the main menu used by this little script.
-    console.log(FtpServerNameHeatmap);
-    getOpenAipAirsapceFile();
+    var openAipFileData = await getOpenAipAirsapceFile();
+    var openAipXml = await getFileData(openAipFileData);
+    var geojsonOpenAip = doAirspaces(openAipXml);
+    await dumpToFtp(geojsonOpenAip);
+
+    var response = JSON.stringify({
+        airspaceCount: airspaces.length
+    })
+    return Promise.resolve(response);
 }
 
-function getOpenAipAirsapceFile() {
+async function getOpenAipAirsapceFile() {
     console.log(colors.green("Getting airspace file from: " + OpenAipAirspaceUrl));
-    axios.get(OpenAipAirspaceUrl)
+    return axios.get(OpenAipAirspaceUrl)
         .then(response => {
-            _openAipAirspaceData = response.data;
-            getFileData(_openAipAirspaceData);
+            return response.data;
         })
         .catch(error => {
             console.log(error);
         });
 }
 
-function getFileData(data){
+async function getFileData(openAipAirspaceData){
     console.log(colors.green("Parsing Openaip data."));
-    xml2js.parseString(_openAipAirspaceData, function(err, result){
-        if(err) { 
+    return parseStringPromise(openAipAirspaceData)
+        .then(data => {
+            return data;
+        })
+        .catch(err => {
             return console.err(err);
         }
-        return doAirspaces(result);
-    });
-
+    );
 }
 
 function doAirspaces(inputData){
@@ -99,13 +116,11 @@ function doAirspaces(inputData){
         airspace.geometry = [ vertexes ];
         airspaces.push(airspace);
     }
-    console.log(colors.yellow(">>> DONE : "+ airspaces.length + " airspaces"));
-
-    // Create file
-    return createGeoFile(airspaces);
+    console.log(colors.yellow("DONE : "+ airspaces.length + " airspaces"));
+    return airspaces;
 }
 
-function createGeoFile(data){
+async function dumpToFtp(data){
     console.log(colors.yellow(">>> Writing result to FTP : "+ FtpServerNameHeatmap));
     var geoData = GeoJSON.parse(data, {'Polygon':'geometry'});
     var jsonGeoData = JSON.stringify(geoData);
@@ -116,7 +131,7 @@ function createGeoFile(data){
     // });
 
     var ftp = new PromiseFtp();
-    ftp.connect(_ftpConnectionInfo)
+    return ftp.connect(_ftpConnectionInfo)
         .then(function (serverMessage) {
             return ftp.cwd(CommonMapDirectory);
         }).then(function () {
