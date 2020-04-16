@@ -5,7 +5,8 @@ var xml2js		= require('xml2js'),
 	Q			= require('q'),
     GeoJSON		= require('geojson')
     axios       = require('axios'),
-    Promise     = require('promise');
+    Promise     = require('promise'),
+    _           = require('lodash');
 
 const util = require('util');
 
@@ -104,7 +105,6 @@ function doAirspaces(inputData){
             },
             geometry:[]
         };
-        airspace.guid = airspace.category + "#" + airspace.name;
 
         // Generate vertexes for airspaces geometry
         // A GeoJSON polygon is polygon : [ [ [Coordinates 1] ] ]
@@ -117,13 +117,11 @@ function doAirspaces(inputData){
         }
         airspace.geometry = [ vertexes ];
 
-        // Filter out so that we don't add the same airspace twice
-        var isAlreadyInserted = airspaces.some(a => JSON.stringify(a) === JSON.stringify(airspace));
+        // --- Filter out so that we don't add the same airspace twice ---
+        // HACK: no idea why I have to check this. Doesn't happen locally, but always happens when executed from gcloud
+        var isAlreadyInserted = airspaces.some(a => _.isEqual(a, airspace));
         if (!isAlreadyInserted)
             airspaces.push(airspace);
-        else {
-            //var existingAirspace = airspaces.filter(a => JSON.stringify(a) === JSON.stringify(airspace));
-        }
     }
     console.log(colors.yellow("DONE : "+ airspaces.length + " airspaces"));
     return airspaces;
