@@ -80,7 +80,7 @@ async function getFileData(openAipAirspaceData){
 }
 
 function doAirspaces(inputData){
-    console.log(colors.green("Transforming Openaip data to Geojson."));
+    console.log(colors.green("Transforming Openaip data to Geojson: Count = " + inputData.OPENAIP.AIRSPACES[0].ASP.length));
     var airspacesList = inputData.OPENAIP.AIRSPACES[0].ASP;
     for(var a = 0; a < airspacesList.length; a ++){
         var tempAirspace = airspacesList[a];
@@ -104,6 +104,8 @@ function doAirspaces(inputData){
             },
             geometry:[]
         };
+        airspace.guid = airspace.category + "#" + airspace.name;
+
         // Generate vertexes for airspaces geometry
         // A GeoJSON polygon is polygon : [ [ [Coordinates 1] ] ]
         var strGeomArr = tempAirspace.GEOMETRY[0].POLYGON[0].split(', ');
@@ -114,7 +116,14 @@ function doAirspaces(inputData){
             vertexes.push(vertex);
         }
         airspace.geometry = [ vertexes ];
-        airspaces.push(airspace);
+
+        // Filter out so that we don't add the same airspace twice
+        var isAlreadyInserted = airspaces.some(a => JSON.stringify(a) === JSON.stringify(airspace));
+        if (!isAlreadyInserted)
+            airspaces.push(airspace);
+        else {
+            //var existingAirspace = airspaces.filter(a => JSON.stringify(a) === JSON.stringify(airspace));
+        }
     }
     console.log(colors.yellow("DONE : "+ airspaces.length + " airspaces"));
     return airspaces;
