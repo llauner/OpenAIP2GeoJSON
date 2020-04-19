@@ -6,15 +6,17 @@ var xml2js		= require('xml2js'),
     GeoJSON		= require('geojson')
     axios       = require('axios'),
     Promise     = require('promise'),
-    _           = require('lodash');
-
+    _           = require('lodash'),
+    moment      = require('moment');
+    
 const util = require('util');
 
 var PromiseFtp = require('promise-ftp');
 
 const OpenAipAirspaceUrl = "https://www.openaip.net/customer_export_akfshb9237tgwiuvb4tgiwbf/fr_asp.aip";
-const CommonMapDirectory = "airspacedata";
+const CommonMapDirectory = "tracemap/airspacedata";
 const AirspaceFileName = "openaip-airspace.geojson";
+const MetaDataFilenName = "openaip-airspace-metadata.json";
 
 var FtpServerNameHeatmap = process.env.FTP_SERVER_NAME_HEATMAP;
 var FtpLoginHeatmap = process.env.FTP_LOGIN_HEATMAP;
@@ -26,6 +28,7 @@ const parseStringPromise = util.promisify(xml2js.parseString)
 
 // Declare global vars
 var airspaces	= [];
+var _openAipAirspaceMetadata = {};
 
 exports.main = (req, res) => {
     main().then(response => {
@@ -46,9 +49,15 @@ if (process.env.DEBUG) {
 
 async function main(){
     console.log(">>> OpenAIP to GeoJSON converter");
+
     var openAipFileData = await getOpenAipAirsapceFile();
     var openAipXml = await getFileData(openAipFileData);
     var geojsonOpenAip = doAirspaces(openAipXml);
+
+    // --- Populate metadata ---
+    _openAipAirspaceMetadata.date = moment().format('DD/MM/YYYY HH:mm:ss');
+    _openAipAirspaceMetadata.airspaceCount = geojsonOpenAip.length;
+
     await dumpToFtp(geojsonOpenAip);
 
     var response = JSON.stringify({
@@ -131,6 +140,7 @@ async function dumpToFtp(data){
     console.log(colors.yellow(">>> Writing result to FTP : "+ FtpServerNameHeatmap));
     var geoData = GeoJSON.parse(data, {'Polygon':'geometry'});
     var jsonGeoData = JSON.stringify(geoData);
+    var metadata = JSON.stringify(_openAipAirspaceMetadata);
 
     // fs.writeFile('./output/airspace.geojson', jsonGeoData, (err) => {
     //     if (err) throw err;
@@ -143,6 +153,8 @@ async function dumpToFtp(data){
             return ftp.cwd(CommonMapDirectory);
         }).then(function () {
             return ftp.put(jsonGeoData, AirspaceFileName);
+        }).then(function () {
+            return ftp.put(metadata, MetaDataFilenName);
         }).then(function () {
             return ftp.end();
         });
