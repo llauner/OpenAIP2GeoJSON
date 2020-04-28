@@ -7,16 +7,21 @@ var xml2js		= require('xml2js'),
     axios       = require('axios'),
     Promise     = require('promise'),
     _           = require('lodash'),
-    moment      = require('moment');
+    moment      = require('moment'),
+    PromiseFtp  = require('promise-ftp');
     
 const util = require('util');
 
-var PromiseFtp = require('promise-ftp');
+var airspace = require('./airspace'), 
+    airport     = require('./airport');
 
 const OpenAipAirspaceUrl = "https://www.openaip.net/customer_export_akfshb9237tgwiuvb4tgiwbf/fr_asp.aip";
+const OpenAipAirportUrl = "https://www.openaip.net/customer_export_akfshb9237tgwiuvb4tgiwbf/fr_wpt.aip";
+
 const CommonMapDirectory = "tracemap/airspacedata";
 const AirspaceFileName = "openaip-airspace.geojson";
 const MetaDataFilenName = "openaip-airspace-metadata.json";
+const AirportFileName = "openaip-airport.geojson";
 
 var FtpServerNameHeatmap = process.env.FTP_SERVER_NAME_HEATMAP;
 var FtpLoginHeatmap = process.env.FTP_LOGIN_HEATMAP;
@@ -27,7 +32,6 @@ var _ftpConnectionInfo = {host: FtpServerNameHeatmap, user: FtpLoginHeatmap, pas
 const parseStringPromise = util.promisify(xml2js.parseString)
 
 // Declare global vars
-var airspaces	= [];
 var _openAipAirspaceMetadata = {};
 
 exports.main = (req, res) => {
@@ -49,26 +53,39 @@ if (process.env.DEBUG) {
 
 async function main(){
     console.log(">>> OpenAIP to GeoJSON converter");
+    console.log("--- Convert Airports ...");
+    var openAipAirportsFileData = await getOpenAipFile(OpenAipAirportUrl);
+    var openAipAirportXml = await parseDataToXML(openAipAirportsFileData);
+    var geojsonOpenAipAirport = airport.doAirports(openAipAirportXml);
 
-    var openAipFileData = await getOpenAipAirsapceFile();
-    var openAipXml = await getFileData(openAipFileData);
-    var geojsonOpenAip = doAirspaces(openAipXml);
+    console.log("--- Convert Airspace ...");
+    var openAipFileData = await getOpenAipFile(OpenAipAirspaceUrl);
+    var openAipXml = await parseDataToXML(openAipFileData);
+    var geojsonOpenAip = airspace.doAirspaces(openAipXml);
 
     // --- Populate metadata ---
     _openAipAirspaceMetadata.date = moment().format('DD/MM/YYYY HH:mm:ss');
     _openAipAirspaceMetadata.airspaceCount = geojsonOpenAip.length;
 
-    await dumpToFtp(geojsonOpenAip);
+    // -- Send everything to FTP
+    await dumpToFtp(geojsonOpenAip, geojsonOpenAipAirport);
 
     var response = JSON.stringify({
-        airspaceCount: airspaces.length
+        airspaceCount: geojsonOpenAip.length,
+        airportsCount: geojsonOpenAipAirport.length
     })
     return Promise.resolve(response);
 }
 
-async function getOpenAipAirsapceFile() {
-    console.log(colors.green("Getting airspace file from: " + OpenAipAirspaceUrl));
-    return axios.get(OpenAipAirspaceUrl)
+/**
+ * getOpenAipFile
+ * Get Data from Url. Retrieves files from the Open AIP website
+ * @param {*} url
+ * @returns
+ */
+async function getOpenAipFile(url) {
+    console.log(colors.green("Getting airspace file from: " + url));
+    return axios.get(url)
         .then(response => {
             return response.data;
         })
@@ -77,9 +94,15 @@ async function getOpenAipAirsapceFile() {
         });
 }
 
-async function getFileData(openAipAirspaceData){
+/**
+ * parseDataToXML
+ *
+ * @param {*} openAipAirspaceData
+ * @returns
+ */
+async function parseDataToXML(openAipData){
     console.log(colors.green("Parsing Openaip data."));
-    return parseStringPromise(openAipAirspaceData)
+    return parseStringPromise(openAipData)
         .then(data => {
             return data;
         })
@@ -89,58 +112,18 @@ async function getFileData(openAipAirspaceData){
     );
 }
 
-function doAirspaces(inputData){
-    console.log(colors.green("Transforming Openaip data to Geojson: Count = " + inputData.OPENAIP.AIRSPACES[0].ASP.length));
-    var airspacesList = inputData.OPENAIP.AIRSPACES[0].ASP;
-    for(var a = 0; a < airspacesList.length; a ++){
-        var tempAirspace = airspacesList[a];
-        var airspace = {
-            guid:       "",
-            aeronautical : "airspace",
-            category:   tempAirspace.$.CATEGORY,
-            version:    tempAirspace.VERSION[0],
-            id:         tempAirspace.ID[0],
-            country:    tempAirspace.COUNTRY[0],
-            name:       tempAirspace.NAME[0],
-            alt_limits:{
-                top:{
-                    ref:tempAirspace.ALTLIMIT_TOP[0].$.REFERENCE,
-                    value: tempAirspace.ALTLIMIT_TOP[0].ALT[0].$.UNIT +" "+ tempAirspace.ALTLIMIT_TOP[0].ALT[0]._
-                },
-                bottom:{
-                    ref:tempAirspace.ALTLIMIT_BOTTOM[0].$.REFERENCE,
-                    value:tempAirspace.ALTLIMIT_BOTTOM[0].ALT[0].$.UNIT +" "+ tempAirspace.ALTLIMIT_BOTTOM[0].ALT[0]._
-                }
-            },
-            geometry:[]
-        };
-
-        // Generate vertexes for airspaces geometry
-        // A GeoJSON polygon is polygon : [ [ [Coordinates 1] ] ]
-        var strGeomArr = tempAirspace.GEOMETRY[0].POLYGON[0].split(', ');
-        var vertexes = [];
-        for(var g = 0; g < strGeomArr.length; g++){
-            var tmpVertex = strGeomArr[g].split(" ");
-            var vertex = [ parseFloat(tmpVertex[0]), parseFloat(tmpVertex[1])];
-            vertexes.push(vertex);
-        }
-        airspace.geometry = [ vertexes ];
-
-        // --- Filter out so that we don't add the same airspace twice ---
-        // HACK: no idea why I have to check this. Doesn't happen locally, but always happens when executed from gcloud
-        var isAlreadyInserted = airspaces.some(a => _.isEqual(a, airspace));
-        if (!isAlreadyInserted)
-            airspaces.push(airspace);
-    }
-    console.log(colors.yellow("DONE : "+ airspaces.length + " airspaces"));
-    return airspaces;
-}
-
-async function dumpToFtp(data){
+async function dumpToFtp(airspaceData, airportData){
     console.log(colors.yellow(">>> Writing result to FTP : "+ FtpServerNameHeatmap));
-    var geoData = GeoJSON.parse(data, {'Polygon':'geometry'});
-    var jsonGeoData = JSON.stringify(geoData);
-    var metadata = JSON.stringify(_openAipAirspaceMetadata);
+    // -- Airspace
+    var airspaceGeoData = airspace.getAirspaceAsGeoJson(airspaceData);
+    var jsonAirspace = JSON.stringify(airspaceGeoData);
+
+    // -- MetaData
+    var jsonMetadata = JSON.stringify(_openAipAirspaceMetadata);
+
+    // -- Airports
+    var airportsGeoData = airport.getAirportsAsGeoJson(airportData);
+    var jsonAirports = JSON.stringify(airportsGeoData);
 
     // fs.writeFile('./output/airspace.geojson', jsonGeoData, (err) => {
     //     if (err) throw err;
@@ -151,11 +134,17 @@ async function dumpToFtp(data){
     return ftp.connect(_ftpConnectionInfo)
         .then(function (serverMessage) {
             return ftp.cwd(CommonMapDirectory);
-        }).then(function () {
-            return ftp.put(jsonGeoData, AirspaceFileName);
-        }).then(function () {
-            return ftp.put(metadata, MetaDataFilenName);
-        }).then(function () {
+            })
+        .then(function () {
+            return ftp.put(jsonAirspace, AirspaceFileName);
+            })
+        .then(function () {
+            return ftp.put(jsonMetadata, MetaDataFilenName);
+            })
+        .then(function () {
+            return ftp.put(jsonAirports, AirportFileName);
+        })
+        .then(function () {
             return ftp.end();
         });
 }
